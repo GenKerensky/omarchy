@@ -25,6 +25,17 @@ run_in_home() {
     "$@"
 }
 
+assert_config_and_rerun() {
+  local home="$1" expected="$2" label="$3"
+  local conf="$home/xdg-config/xdg-desktop-portal/hyprland-portals.conf"
+
+  diff -u "$expected" "$conf" || fail "$label"
+  pass "$label"
+  run_in_home "$home" bash -euo pipefail "$setup_script"
+  diff -u "$expected" "$conf" || fail "$label: rerun leaves the config unchanged"
+  pass "$label: rerun leaves the config unchanged"
+}
+
 assert_generated() {
   local home="$1" label="$2"
   local conf="$home/xdg-config/xdg-desktop-portal/hyprland-portals.conf"
@@ -108,6 +119,67 @@ run_in_home "$fresh" bash -euo pipefail "$setup_script"
 grep -Fx 'org.freedesktop.impl.portal.FileChooser=nautilus' "$fresh_conf" >/dev/null ||
   fail "An empty portal preference file is populated"
 pass "an empty portals.conf is populated rather than left untouched"
+
+# Exact-content comparisons pin section placement, key counts, and preservation
+# of unrelated content without approximating GKeyFile with a global key grep.
+expected_conf="$fresh/expected.conf"
+
+# A key in another group must not suppress the [preferred] chooser.
+printf '%s\n' '[preferred]' 'default=hyprland;gtk' '[other]' \
+  'org.freedesktop.impl.portal.FileChooser=custom' >"$fresh_conf"
+cat >"$expected_conf" <<'CONF'
+[preferred]
+org.freedesktop.impl.portal.FileChooser=nautilus
+default=hyprland;gtk
+[other]
+org.freedesktop.impl.portal.FileChooser=custom
+CONF
+run_in_home "$fresh" bash -euo pipefail "$setup_script"
+assert_config_and_rerun "$fresh" "$expected_conf" "a chooser in another group does not suppress the preferred chooser"
+
+# The same guarantee applies when [preferred] must be created.
+printf '%s\n' '[other]' 'org.freedesktop.impl.portal.FileChooser=custom' >"$fresh_conf"
+cat >"$expected_conf" <<'CONF'
+[preferred]
+org.freedesktop.impl.portal.FileChooser=nautilus
+
+[other]
+org.freedesktop.impl.portal.FileChooser=custom
+CONF
+run_in_home "$fresh" bash -euo pipefail "$setup_script"
+assert_config_and_rerun "$fresh" "$expected_conf" "a missing preferred group is added despite another group's chooser"
+
+# GKeyFile merges repeated groups. Install exactly one preference, in the first
+# group, while preserving both headers, a custom default chain, and other keys.
+printf '%s\n' '  [preferred]  ' 'default=kde;hyprland;gtk' '[other]' \
+  'org.freedesktop.impl.portal.FileChooser=custom' '[preferred]' \
+  'org.freedesktop.impl.portal.Screenshot=hyprland' >"$fresh_conf"
+printf '%s\n' '  [preferred]  ' >"$expected_conf"
+cat >>"$expected_conf" <<'CONF'
+org.freedesktop.impl.portal.FileChooser=nautilus
+default=kde;hyprland;gtk
+[other]
+org.freedesktop.impl.portal.FileChooser=custom
+[preferred]
+org.freedesktop.impl.portal.Screenshot=hyprland
+CONF
+run_in_home "$fresh" bash -euo pipefail "$setup_script"
+assert_config_and_rerun "$fresh" "$expected_conf" "repeated preferred groups receive only one new chooser preference"
+
+# A preference in a later occurrence still wins over installing a default.
+printf '%s\n' '[preferred]' 'default=hyprland;gtk' '[other]' \
+  'org.freedesktop.impl.portal.FileChooser=other' '  [preferred]  ' \
+  '  org.freedesktop.impl.portal.FileChooser = kde' >"$fresh_conf"
+cp "$fresh_conf" "$expected_conf"
+run_in_home "$fresh" bash -euo pipefail "$setup_script"
+assert_config_and_rerun "$fresh" "$expected_conf" "a chooser in a later preferred group is retained byte-for-byte"
+
+# An earlier preference survives a later preferred group without that key too.
+printf '%s\n' '[preferred]' 'org.freedesktop.impl.portal.FileChooser=custom' \
+  '[other]' 'default=gtk' '[preferred]' 'default=hyprland;gtk' >"$fresh_conf"
+cp "$fresh_conf" "$expected_conf"
+run_in_home "$fresh" bash -euo pipefail "$setup_script"
+assert_config_and_rerun "$fresh" "$expected_conf" "a chooser in the first repeated preferred group is retained byte-for-byte"
 
 # Unset XDG dirs: files must land in the $HOME defaults.
 HOME="$xdg_home" env -u XDG_CONFIG_HOME -u XDG_DATA_HOME bash -euo pipefail "$setup_script"
