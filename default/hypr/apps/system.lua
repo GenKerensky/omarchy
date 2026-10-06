@@ -19,6 +19,11 @@ o.window({
   title = "^(Open.*Files?|Open [F|f]older.*|Save.*Files?|Save.*As|Save|All Files|.*wants to [open|save].*|[C|c]hoose.*)",
 }, { tag = "+floating-window" })
 
+-- Nautilus portal choosers can use caller-provided titles or be modal dialogs.
+-- Keep ordinary file manager windows tiled.
+o.window({ class = "^org.gnome.Nautilus$", title = "^File Upload$" }, { tag = "+floating-window" })
+o.window({ class = "^org.gnome.Nautilus$", modal = true }, { tag = "+floating-window" })
+
 -- The About fastfetch layout needs more columns than the standard float provides.
 -- This size only covers the first launch: omarchy-launch-about measures the
 -- rendered content, remembers the size that hugs it, and applies that as its own

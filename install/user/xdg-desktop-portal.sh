@@ -22,16 +22,17 @@ if [[ ! -s $portal_config ]]; then
     '[preferred]' \
     'default=hyprland;gtk' \
     'org.freedesktop.impl.portal.FileChooser=nautilus' >"$portal_config"
-# GKeyFile allows whitespace around the separator, so the existing-preference
-# check has to as well. Matching only `key=` misses `key = kde`, and the
-# insertion below then adds a second FileChooser key; GKeyFile resolves a
-# duplicate key to the last occurrence, so the user's backend keeps winning and
-# this whole script becomes a silent no-op on exactly the installs it targets.
-elif ! grep -qE '^[[:space:]]*org\.freedesktop\.impl\.portal\.FileChooser[[:space:]]*=' "$portal_config"; then
-  # Same tolerance on the section header, so a padded [preferred] is amended
-  # rather than gaining a confusing second copy of itself.
+# GKeyFile allows whitespace around the separator and repeated groups. Preserve
+# an explicit chooser in any [preferred] group, but ignore keys in other groups.
+elif ! awk '
+  /^[[:space:]]*\[/ { preferred = ($0 ~ /^[[:space:]]*\[preferred\][[:space:]]*$/) }
+  preferred && /^[[:space:]]*org\.freedesktop\.impl\.portal\.FileChooser[[:space:]]*=/ { found = 1 }
+  END { exit !found }
+' "$portal_config"; then
+  # Same tolerance on the section header. GNU sed's zero-address range inserts
+  # only after the first header, even when [preferred] is repeated.
   if grep -qE '^[[:space:]]*\[preferred\][[:space:]]*$' "$portal_config"; then
-    sed -i -E '/^[[:space:]]*\[preferred\][[:space:]]*$/a org.freedesktop.impl.portal.FileChooser=nautilus' "$portal_config"
+    sed -i -E '0,/^[[:space:]]*\[preferred\][[:space:]]*$/s//&\norg.freedesktop.impl.portal.FileChooser=nautilus/' "$portal_config"
   else
     sed -i '1i [preferred]\norg.freedesktop.impl.portal.FileChooser=nautilus\n' "$portal_config"
   fi
